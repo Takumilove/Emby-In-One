@@ -1,9 +1,12 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 )
@@ -376,6 +379,37 @@ func (a *App) handleItemImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		return
+	}
+	// Images ride the stream request path, which stops at redirects when
+	// directRedirect is enabled so the playback handler can classify each hop.
+	// The image handler has no such contract with the client: a 123-style
+	// upstream answers poster requests with a 302 to the netdisk's image CDN,
+	// and forwarding it while dropping the Location header leaves the client a
+	// broken image. Follow the hops here instead — posters are small, so
+	// relaying them through this proxy is cheap.
+	for hop := 0; isRedirectStatus(resp.StatusCode) && hop < maxStreamRedirectHops; hop++ {
+		location := resp.Header.Get("Location")
+		if location == "" {
+			break
+		}
+		var base *url.URL
+		if resp.Request != nil {
+			base = resp.Request.URL
+		}
+		abs, rerr := resolveRedirectTarget(base, location)
+		if rerr != nil || abs == nil {
+			break
+		}
+		followed, ferr := resolved.Client.fetchRedirectTarget(r.Context(), abs.String(), nil)
+		if ferr != nil {
+			if errors.Is(ferr, context.Canceled) || errors.Is(ferr, context.DeadlineExceeded) {
+				return
+			}
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		resp.Body.Close()
+		resp = followed
 	}
 	defer resp.Body.Close()
 	w.Header().Set("Cache-Control", "public, max-age=86400")
