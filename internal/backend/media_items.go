@@ -412,21 +412,11 @@ func (a *App) fetchItemsAcrossUpstreams(ctx context.Context, reqCtx *RequestCont
 		tasks[i] = upstreamTask{
 			index: i,
 			fn: func(bgCtx context.Context) upstreamItemsResult {
-				serverQuery := cloneValues(query)
-				// Clients only ever hold EIO's virtual user ID, which no upstream knows.
-				serverQuery.Set("UserId", c.clientUserID())
-				if hasBatchIDQuery(serverQuery) {
-					translated, ok := translateBatchIDQueryForServer(serverQuery, c.ID, a.IDStore)
-					if !ok {
-						return upstreamItemsResult{Err: errBatchQueryNotTranslatable}
-					}
-					serverQuery = translated
-				}
-				payload, err := c.RequestJSON(bgCtx, reqCtx, a.Identity, http.MethodGet, strings.Replace(pathTemplate, "%s", c.clientUserID(), 1), serverQuery, body)
+				items, err := a.fetchMergedItemsFromUpstream(bgCtx, reqCtx, c, pathTemplate, query, body)
 				if err != nil {
 					return upstreamItemsResult{Err: err}
 				}
-				return upstreamItemsResult{ServerID: c.ID, Items: asItems(payload)}
+				return upstreamItemsResult{ServerID: c.ID, Items: items}
 			},
 		}
 	}
@@ -468,6 +458,50 @@ func getItemKey(item map[string]any) string {
 	return ""
 }
 
+// dedupFacts carries the attributes a Movie/Series match is allowed on. Servers
+// disagree about metadata coverage: the same title comes back from one upstream
+// with a Tmdb id and from another without one, or one side has a year and the
+// other does not. Strict key equality (getItemKey) misses those pairs — a copy
+// keyed "tmdb:535167" can never collide with its own "name:流浪地球:2019" twin —
+// so the merger matches on facts instead and only refuses clearly different items.
+type dedupFacts struct {
+	tmdb string
+	name string // lower-cased
+	year string // "" when the upstream did not send one
+	typ  string // "Movie" or "Series"
+}
+
+func dedupFactsOf(item map[string]any) dedupFacts {
+	f := dedupFacts{}
+	f.typ, _ = item["Type"].(string)
+	f.name, _ = item["Name"].(string)
+	f.name = strings.ToLower(f.name)
+	if y, ok := numericInt(item["ProductionYear"]); ok {
+		f.year = strconv.Itoa(y)
+	}
+	if providerIDs, ok := item["ProviderIds"].(map[string]any); ok {
+		f.tmdb, _ = providerIDs["Tmdb"].(string)
+	}
+	return f
+}
+
+// movieSeriesMatch reports whether candidate and existing plausibly describe the
+// same title. Distinct non-empty Tmdb ids always mean different titles; otherwise
+// the name must agree and the years must not contradict (a missing year on either
+// side keeps the match possible — that asymmetry is exactly what broke merging).
+func movieSeriesMatch(a, b dedupFacts) bool {
+	if a.tmdb != "" && b.tmdb != "" && a.tmdb != b.tmdb {
+		return false
+	}
+	if a.name == "" || a.name != b.name {
+		return false
+	}
+	if a.typ != b.typ {
+		return false
+	}
+	return a.year == "" || b.year == "" || a.year == b.year
+}
+
 // containsChinese checks if a string contains CJK Unified Ideographs (U+4E00–U+9FA5).
 func containsChinese(s string) bool {
 	for _, r := range s {
@@ -479,9 +513,9 @@ func containsChinese(s string) bool {
 }
 
 // isBetterMetadata returns true if the candidate item from candidateServerID has
-// better metadata than the existing item from existingServerID, using the V1.2
-// 4-level priority: priorityMetadata flag → Chinese in Overview → longer
-// Overview → earlier upstream order.
+// better metadata than the existing item from existingServerID, using a 5-level
+// priority: priorityMetadata flag → Primary image present → Chinese in Overview
+// → longer Overview → earlier upstream order.
 func isBetterMetadata(existing map[string]any, existingServerID string, candidate map[string]any, candidateServerID string, cfg Config) bool {
 	// 1. priorityMetadata flag
 	existingPriority := false
@@ -505,7 +539,18 @@ func isBetterMetadata(existing map[string]any, existingServerID string, candidat
 		return false
 	}
 
-	// 2. Chinese in Overview
+	// 2. Primary image present. A metadata-rich copy without a poster renders
+	// as a blank tile, so at equal priority the image-bearing copy wins.
+	existingHasImage := hasPrimaryImage(existing)
+	candidateHasImage := hasPrimaryImage(candidate)
+	if candidateHasImage && !existingHasImage {
+		return true
+	}
+	if existingHasImage && !candidateHasImage {
+		return false
+	}
+
+	// 3. Chinese in Overview
 	existingOverview, _ := existing["Overview"].(string)
 	candidateOverview, _ := candidate["Overview"].(string)
 	hasChinese1 := containsChinese(existingOverview)
@@ -517,7 +562,7 @@ func isBetterMetadata(existing map[string]any, existingServerID string, candidat
 		return false
 	}
 
-	// 3. Longer Overview
+	// 4. Longer Overview
 	if len(candidateOverview) > len(existingOverview) {
 		return true
 	}
@@ -525,8 +570,25 @@ func isBetterMetadata(existing map[string]any, existingServerID string, candidat
 		return false
 	}
 
-	// 4. Lower server index (order in cfg.Upstream)
+	// 5. Lower server index (order in cfg.Upstream)
 	return candidateOrder < existingOrder
+}
+
+// hasPrimaryImage reports whether the item carries a Primary image tag, the
+// marker Emby sets for a poster. Both the string-hash form and the boolean form
+// appear in the wild, so accept either.
+func hasPrimaryImage(item map[string]any) bool {
+	tags, ok := item["ImageTags"].(map[string]any)
+	if !ok {
+		return false
+	}
+	switch v := tags["Primary"].(type) {
+	case string:
+		return v != ""
+	case bool:
+		return v
+	}
+	return false
 }
 
 func (a *App) mergedItemsPayload(results []upstreamItemsResult, clientUserID string) map[string]any {
@@ -538,10 +600,12 @@ func (a *App) mergedItemsPayload(results []upstreamItemsResult, clientUserID str
 	}
 }
 
-// mergeRoundRobinItems interleaves items from every server in turn, deduplicating by
-// getItemKey: the first copy keeps the virtual id and later copies are registered as
-// additional instances of it, replacing the display item only when their metadata is
-// better.
+// mergeRoundRobinItems interleaves items from every server in turn, deduplicating
+// Movies/Series by fact-compatible match (tmdb id when both sides carry one, name
+// with non-contradicting year otherwise) and Episodes by series+season+episode:
+// the first copy keeps the virtual id and later copies are registered as
+// additional instances of it, replacing the display item only when their metadata
+// is better.
 func (a *App) mergeRoundRobinItems(results []upstreamItemsResult, clientUserID string) []map[string]any {
 	cfg := a.ConfigStore.Snapshot()
 	merged := make([]map[string]any, 0)
@@ -549,8 +613,14 @@ func (a *App) mergeRoundRobinItems(results []upstreamItemsResult, clientUserID s
 		virtualID   string
 		mergedIndex int // position in merged slice
 		serverID    string
+		facts       dedupFacts
 	}
-	seen := map[string]*seenEntry{} // dedupKey → entry
+	// Buckets for O(1) lookup: by tmdb id and by lower-cased name. Name buckets
+	// hold every candidate with that name; year/type compatibility is checked per
+	// entry because a bare name is not unique across a whole library.
+	seenTmdb := map[string]*seenEntry{}
+	seenName := map[string][]*seenEntry{}
+	seenEpisode := map[string]*seenEntry{}
 
 	maxLen := 0
 	for _, result := range results {
@@ -565,15 +635,38 @@ func (a *App) mergeRoundRobinItems(results []upstreamItemsResult, clientUserID s
 				continue
 			}
 			item := result.Items[i]
-			key := getItemKey(item)
 			originalID, _ := item["Id"].(string)
-			if key == "" || originalID == "" {
+			if originalID == "" {
 				rewriteResponseIDs(item, result.ServerID, a.IDStore, cfg.Server.ID, clientUserID)
 				merged = append(merged, item)
 				continue
 			}
 
-			if entry, found := seen[key]; found {
+			itemType, _ := item["Type"].(string)
+			var entry *seenEntry
+			var episodeKey string
+			facts := dedupFactsOf(item)
+			switch itemType {
+			case "Movie", "Series":
+				if facts.tmdb != "" {
+					entry = seenTmdb["tmdb:"+facts.tmdb]
+				}
+				if entry == nil {
+					for _, e := range seenName[facts.name] {
+						if movieSeriesMatch(facts, e.facts) {
+							entry = e
+							break
+						}
+					}
+				}
+			case "Episode":
+				episodeKey = getItemKey(item)
+				if episodeKey != "" {
+					entry = seenEpisode[episodeKey]
+				}
+			}
+
+			if entry != nil {
 				// Duplicate: associate as an additional instance of the same item.
 				a.IDStore.AssociateAdditionalInstance(entry.virtualID, originalID, result.ServerID)
 				if isBetterMetadata(merged[entry.mergedIndex], entry.serverID, item, result.ServerID, cfg) {
@@ -582,13 +675,30 @@ func (a *App) mergeRoundRobinItems(results []upstreamItemsResult, clientUserID s
 					item["Id"] = entry.virtualID
 					merged[entry.mergedIndex] = item
 					entry.serverID = result.ServerID
+					// The replacement's facts may be richer (e.g. it carries the
+					// tmdb id); rebind so later lookups can use them.
+					if facts.tmdb != "" {
+						seenTmdb["tmdb:"+facts.tmdb] = entry
+						entry.facts.tmdb = facts.tmdb
+					}
 				}
 				continue
 			}
 
 			// First occurrence: keep the virtual ID, rewrite everything else.
 			virtualID := a.IDStore.GetOrCreateVirtualID(originalID, result.ServerID)
-			seen[key] = &seenEntry{virtualID: virtualID, mergedIndex: len(merged), serverID: result.ServerID}
+			entry = &seenEntry{virtualID: virtualID, mergedIndex: len(merged), serverID: result.ServerID, facts: facts}
+			switch itemType {
+			case "Movie", "Series":
+				if facts.tmdb != "" {
+					seenTmdb["tmdb:"+facts.tmdb] = entry
+				}
+				seenName[facts.name] = append(seenName[facts.name], entry)
+			case "Episode":
+				if episodeKey != "" {
+					seenEpisode[episodeKey] = entry
+				}
+			}
 			delete(item, "Id")
 			rewriteResponseIDs(item, result.ServerID, a.IDStore, cfg.Server.ID, clientUserID)
 			item["Id"] = virtualID
@@ -603,11 +713,124 @@ func (a *App) mergeRoundRobinItems(results []upstreamItemsResult, clientUserID s
 // from each upstream.
 const mergedItemsScanLimit = 5000
 
+// upstreamPageLimitCeiling is the per-request item window used for an upstream marked
+// pagedScan. A modified Emby deployment can answer a wider window with a bare 400
+// instead of clamping it, which would make the whole merged query fail on that server
+// and leave the client with the other upstreams only. Requests to such a server are
+// therefore issued with this window, and the rest of the candidate set is pulled page
+// by page.
+const upstreamPageLimitCeiling = 200
+
+// fallbackUpstreamPageLimit is the window used for a second attempt after a pagedScan
+// upstream refused even the capped window. It is narrow enough for a server with a
+// lower ceiling than the default to still answer instead of being dropped from the
+// merge.
+const fallbackUpstreamPageLimit = 100
+
+// fetchMergedItemsFromUpstream collects one upstream's candidate set.
+//
+// By default the upstream is asked for the whole scan budget (mergedItemsScanLimit
+// rows) in one request, which every stock Emby server accepts. An upstream with
+// pagedScan set in its config is the exception: a modified Emby deployment answers a
+// wider window with a bare 400, which would make every merged query fail on that
+// server. Those are pulled with a per-request window capped at
+// upstreamPageLimitCeiling, following StartIndex until the upstream runs out of rows
+// or the scan budget is reached. An upstream that still refuses the capped window is
+// retried once at fallbackUpstreamPageLimit, and pages already collected are kept, so
+// a server with a lower ceiling is narrowed rather than dropped from the merge.
+func (a *App) fetchMergedItemsFromUpstream(ctx context.Context, reqCtx *RequestContext, c *UpstreamClient, pathTemplate string, query url.Values, body any) ([]map[string]any, error) {
+	path := strings.Replace(pathTemplate, "%s", c.clientUserID(), 1)
+	collected := make([]map[string]any, 0, upstreamPageLimitCeiling)
+
+	buildQuery := func(startIndex, window int) (url.Values, error) {
+		pageQuery := cloneValues(query)
+		// Clients only ever hold EIO's virtual user ID, which no upstream knows.
+		pageQuery.Set("UserId", c.clientUserID())
+		if hasBatchIDQuery(pageQuery) {
+			translated, ok := translateBatchIDQueryForServer(pageQuery, c.ID, a.IDStore)
+			if !ok {
+				return nil, errBatchQueryNotTranslatable
+			}
+			pageQuery = translated
+		}
+		pageQuery.Set("StartIndex", strconv.Itoa(startIndex))
+		pageQuery.Set("Limit", strconv.Itoa(window))
+		return pageQuery, nil
+	}
+
+	if !c.Config.PagedScan {
+		// The default: one wide request, the way the upstream would be asked if the
+		// proxy were not merging. Paging is opt-in per upstream for servers that
+		// refuse a wide window.
+		directQuery, err := buildQuery(0, mergedItemsScanLimit)
+		if err != nil {
+			return nil, err
+		}
+		payload, err := c.RequestJSON(ctx, reqCtx, a.Identity, http.MethodGet, path, directQuery, body)
+		if err != nil {
+			return nil, err
+		}
+		return asItems(payload), nil
+	}
+
+	for len(collected) < mergedItemsScanLimit {
+		window := upstreamPageLimitCeiling
+		if remaining := mergedItemsScanLimit - len(collected); remaining < window {
+			window = remaining
+		}
+		pageQuery, err := buildQuery(len(collected), window)
+		if err != nil {
+			return nil, err
+		}
+		payload, err := c.RequestJSON(ctx, reqCtx, a.Identity, http.MethodGet, path, pageQuery, body)
+		if err != nil {
+			// A server with a ceiling below the default fails the very first page. One
+			// retry with a smaller window tells "refused because the window was too
+			// wide" apart from a real outage, and whatever was collected so far is kept.
+			if len(collected) == 0 && window > fallbackUpstreamPageLimit {
+				retryQuery, qErr := buildQuery(0, fallbackUpstreamPageLimit)
+				if qErr != nil {
+					return nil, qErr
+				}
+				retryPayload, retryErr := c.RequestJSON(ctx, reqCtx, a.Identity, http.MethodGet, path, retryQuery, body)
+				if retryErr != nil {
+					return nil, err
+				}
+				items := asItems(retryPayload)
+				if len(items) < fallbackUpstreamPageLimit {
+					return items, nil
+				}
+				collected = append(collected, items...)
+				continue
+			}
+			if len(collected) > 0 {
+				return collected, nil
+			}
+			return nil, err
+		}
+
+		items := asItems(payload)
+		if len(items) == 0 {
+			break
+		}
+		collected = append(collected, items...)
+		if len(items) < window {
+			// The upstream had fewer rows than the window asked for, so this was the
+			// last page. Asking again would only return an empty set.
+			break
+		}
+	}
+
+	return collected, nil
+}
+
 // requestMergedCandidateSet asks the upstreams for the candidate set instead of the
 // client's page. Paging belongs to the proxy on this path: the answers are merged and
 // deduplicated before the page is cut, so a window forwarded upstream would be cut
 // twice — once there, once by paginateItems — and the merged total would be the page
-// size rather than the library size, telling the client there is no page 2.
+// size rather than the library size, telling the client there is no page 2. The value
+// is only a default for the shared query: fetchMergedItemsFromUpstream decides the
+// per-request window itself, per upstream.
 func requestMergedCandidateSet(query url.Values) {
 	query.Set("StartIndex", "0")
 	query.Set("Limit", strconv.Itoa(mergedItemsScanLimit))

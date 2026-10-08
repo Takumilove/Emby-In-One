@@ -21,6 +21,11 @@ var (
 	audioStreamRoute = streamRoute{pathPrefix: "/Audio", label: "Audio stream"}
 )
 
+// maxStreamRedirectHops bounds the per-hop redirect walk for directRedirect: each
+// hop is re-evaluated against the self-host rules, and a chain that never reaches
+// an external target or real bytes is cut off as a bad gateway.
+const maxStreamRedirectHops = 5
+
 func (a *App) handleVideoProxy(w http.ResponseWriter, r *http.Request) {
 	a.proxyStream(w, r, videoStreamRoute)
 }
@@ -114,7 +119,62 @@ func (a *App) forwardStream(w http.ResponseWriter, r *http.Request, client *Upst
 		writeJSON(w, http.StatusBadGateway, map[string]any{"message": err.Error()})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}()
+
+	// directRedirect: a STRM-based upstream answers the stream request with a 302
+	// to the netdisk's signed CDN link. Hand that link to the client instead of
+	// relaying the film through this proxy's upload. Targets on the proxy or the
+	// upstream's own hosts are fetched here instead — see
+	// resolveStreamRedirectTarget for why those never reach the client. Some
+	// upstreams bounce through their own host first (signers, 115-style gateways),
+	// so the same per-hop decision repeats: the first hop resolving to an external
+	// host goes straight to the player, internal hops are fetched here.
+	if client.Config.DirectRedirect && isRedirectStatus(resp.StatusCode) {
+		handled := false
+		for hop := 0; hop < maxStreamRedirectHops && resp != nil && isRedirectStatus(resp.StatusCode); hop++ {
+			target, follow := client.resolveStreamRedirectTarget(resp, r.Host)
+			if !follow {
+				if a.Logger != nil {
+					a.Logger.Infof("Stream redirect: itemId=%s -> %d %s (direct to client, hop %d)", virtualItemID, resp.StatusCode, formatOutboundURLForLog(target), hop)
+				}
+				copyStreamResponseHeaders(w, resp)
+				w.Header().Set("Location", target)
+				w.WriteHeader(resp.StatusCode)
+				handled = true
+				break
+			}
+			if target == "" {
+				writeJSON(w, http.StatusBadGateway, map[string]any{"message": "Upstream redirect without a target"})
+				return
+			}
+			followed, ferr := client.fetchRedirectTarget(r.Context(), target, streamRequestHeaders(r))
+			if ferr != nil {
+				if errors.Is(ferr, context.Canceled) || errors.Is(ferr, context.DeadlineExceeded) {
+					return
+				}
+				if a.Logger != nil {
+					a.Logger.Errorf("Stream redirect follow failed: itemId=%s: %s", virtualItemID, redactURLInError(ferr))
+				}
+				writeJSON(w, http.StatusBadGateway, map[string]any{"message": "Failed to follow upstream redirect"})
+				return
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+			resp = followed
+		}
+		if handled {
+			return
+		}
+		if resp != nil && isRedirectStatus(resp.StatusCode) {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"message": "Too many upstream redirects"})
+			return
+		}
+	}
 
 	contentType := resp.Header.Get("Content-Type")
 	if isPlaylistResponse(contentType, rest) {

@@ -697,6 +697,102 @@ func (c *UpstreamClient) Stream(ctx context.Context, reqCtx *RequestContext, ide
 	return c.doRequest(ctx, reqCtx, http.MethodGet, path, params, nil, headers, true)
 }
 
+// resolveStreamRedirectTarget classifies a 3xx the upstream answered on a stream
+// request. It returns the absolute target and whether this proxy must fetch it
+// itself: a target on the proxy's own address would loop, and one on the
+// upstream's own hosts would leak the upstream's address and identity to the
+// client. Only a target on an unrelated host — the signed CDN link of a STRM
+// source, typically — is safe to hand over. The target is reported in both cases.
+func (c *UpstreamClient) resolveStreamRedirectTarget(resp *http.Response, proxyHost string) (string, bool) {
+	location := strings.TrimSpace(resp.Header.Get("Location"))
+	if location == "" {
+		return "", true
+	}
+	var base *url.URL
+	if resp.Request != nil && resp.Request.URL != nil {
+		base = resp.Request.URL
+	}
+	abs, err := resolveRedirectTarget(base, location)
+	if err != nil || (abs.Scheme != "http" && abs.Scheme != "https") || abs.Host == "" {
+		return location, true
+	}
+	if proxyHost != "" && strings.EqualFold(abs.Host, proxyHost) {
+		return abs.String(), true
+	}
+	for _, host := range c.selfHosts() {
+		if strings.EqualFold(abs.Host, host) {
+			return abs.String(), true
+		}
+	}
+	return abs.String(), false
+}
+
+// fetchRedirectTarget retrieves an upstream redirect target through this proxy's
+// own line. The target is taken as issued: the upstream built it for exactly this
+// request, so no identity rewrite happens here. Single hop on purpose: each
+// response is returned as-is (ErrUseLastResponse), so the stream handler can
+// re-evaluate every hop — an internal hop that bounces to an external CDN must
+// still reach the player instead of being silently relayed from here.
+func (c *UpstreamClient) fetchRedirectTarget(ctx context.Context, rawURL string, extraHeaders http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for key, values := range extraHeaders {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	client := &http.Client{Transport: c.transport, Timeout: 0, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, doErr := client.Do(req)
+	if doErr != nil {
+		return nil, &redactedError{err: doErr}
+	}
+	return resp, nil
+}
+
+// selfHosts lists the hosts this upstream answers on, across its API and stream
+// bases. The proxy's own address is per-request and passed in separately.
+func (c *UpstreamClient) selfHosts() []string {
+	bases := append([]string{c.BaseURL}, c.streamBaseCandidates()...)
+	hosts := make([]string, 0, len(bases))
+	seen := map[string]bool{}
+	for _, base := range bases {
+		u, err := url.Parse(base)
+		if err != nil || u.Host == "" || seen[u.Host] {
+			continue
+		}
+		seen[u.Host] = true
+		hosts = append(hosts, u.Host)
+	}
+	return hosts
+}
+
+// resolveRedirectTarget turns a possibly relative Location into an absolute URL,
+// resolved against the request that produced it.
+func resolveRedirectTarget(base *url.URL, location string) (*url.URL, error) {
+	loc, err := url.Parse(location)
+	if err != nil {
+		return nil, err
+	}
+	if loc.IsAbs() {
+		return loc, nil
+	}
+	if base == nil {
+		return nil, errors.New("relative redirect target without a request URL")
+	}
+	return base.ResolveReference(loc), nil
+}
+
+func isRedirectStatus(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
+}
+
 // redirectPolicy returns the redirect handling for an upstream. Following is the
 // default and is delegated to net/http, which caps the chain at 10 hops; passing
 // nil keeps exactly that. When the administrator turns following off, the request
@@ -909,7 +1005,15 @@ func (c *UpstreamClient) doRequestOnce(ctx context.Context, reqCtx *RequestConte
 		// the wait for response headers (transport-level, see upstreamHeaderTimeout)
 		// and the request's own lifetime — the request carries the client's context, so a
 		// client that goes away takes the upstream call with it.
-		client = &http.Client{Transport: c.transport, Timeout: 0, CheckRedirect: redirectPolicy(c.Config.FollowRedirects)}
+		policy := redirectPolicy(c.Config.FollowRedirects)
+		if c.Config.DirectRedirect {
+			// The stream handler decides per response what a redirect means: an
+			// external target goes to the client, an internal one is fetched here.
+			// The probe must therefore see the 3xx itself instead of net/http
+			// following it transparently.
+			policy = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		}
+		client = &http.Client{Transport: c.transport, Timeout: 0, CheckRedirect: policy}
 	}
 	if c.logger != nil {
 		changed := preparedURL.changed

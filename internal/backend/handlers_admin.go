@@ -21,6 +21,8 @@ type adminUpstreamInput struct {
 	FollowRedirects     *bool     `json:"followRedirects"`
 	ProxyID             *string   `json:"proxyId"`
 	PriorityMetadata    *bool     `json:"priorityMetadata"`
+	DirectRedirect      *bool     `json:"directRedirect"`
+	PagedScan           *bool     `json:"pagedScan"`
 	CustomUserAgent     *string   `json:"customUserAgent"`
 	CustomClient        *string   `json:"customClient"`
 	CustomClientVersion *string   `json:"customClientVersion"`
@@ -107,6 +109,8 @@ func (a *App) handleAdminUpstreamList(w http.ResponseWriter, r *http.Request) {
 			"followRedirects":     upstream.FollowRedirects,
 			"proxyId":             valueOrNil(upstream.ProxyID),
 			"priorityMetadata":    upstream.PriorityMetadata,
+			"directRedirect":      upstream.DirectRedirect,
+			"pagedScan":           upstream.PagedScan,
 			"customUserAgent":     upstream.CustomUserAgent,
 			"customClient":        upstream.CustomClient,
 			"customClientVersion": upstream.CustomClientVersion,
@@ -606,13 +610,13 @@ func (a *App) handleAdminUsersList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		result = append(result, map[string]any{
-			"id":             u.ID,
-			"username":       u.Username,
-			"enabled":        u.Enabled,
-			"allowedServers": u.AllowedServers,
+			"id":              u.ID,
+			"username":        u.Username,
+			"enabled":         u.Enabled,
+			"allowedServers":  u.AllowedServers,
 			"hiddenLibraries": a.hiddenLibrariesJSONFor(u.ID),
-			"serverNames":    serverNames,
-			"createdAt":      u.CreatedAt,
+			"serverNames":     serverNames,
+			"createdAt":       u.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -664,11 +668,11 @@ func (a *App) handleAdminUsersUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var input struct {
-		Username         *string              `json:"username"`
-		Password         *string              `json:"password"`
-		Enabled          *bool                `json:"enabled"`
-		AllowedServers   *[]string           `json:"allowedServers"`
-		HiddenLibraries  map[string]*[]string `json:"hiddenLibraries"`
+		Username        *string              `json:"username"`
+		Password        *string              `json:"password"`
+		Enabled         *bool                `json:"enabled"`
+		AllowedServers  *[]string            `json:"allowedServers"`
+		HiddenLibraries map[string]*[]string `json:"hiddenLibraries"`
 	}
 	if err := decodeJSONBody(r, &input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid request body"})
