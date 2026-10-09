@@ -16,6 +16,13 @@
 - **代理模式 HLS 清单重写行为修复**：此前 Go 版把 HLS 清单里的分片 URL 重写为**上游主机的绝对地址**（携带虚拟 ID 与代理 token，客户端实际无法使用，HLS 转码播放会失败）。现恢复为**代理相对路径**——分片请求回到本代理，与 Node 版 V1.2 的既定行为一致。已配置反向代理 / 公网域名的部署无需任何改动。
 - **推流线路旧配置无需迁移**：旧配置里的单条 `streamingUrl` 键继续有效，保存时自动并入新的有序列表。
 
+### 客户端兼容性增强（Takumilove 维护版）
+
+- **路由大小写规范化匹配**：修复 Go 标准库路由严格大小写敏感导致的兼容性问题，解决 AfuseKt 等客户端请求小写路径 `/Users/authenticatebyname` 被误判落入兜底路由导致 401 的问题；自动对所有 Emby 静态路由段进行标准大驼峰规范化，同时保持动态 ID 原样传递。
+- **多种登录凭据提交格式支持**：`AuthenticateByName` 接口增强为同时兼容 `application/json`、`application/x-www-form-urlencoded` 表单提交以及 URL Query 参数。
+- **管理员账号大小写兼容**：管理员账号比对改为大小写不敏感（`strings.EqualFold`）。
+- **Token 头字段兼容**：支持 `Token=`、`token=`、`Token="` 与 `token="`。
+
 ### 安全增强
 
 - **内容访问控制**：新增 `requireServerAccess` 权限检查；聚合结果中会过滤掉当前用户无权访问的 `OtherInstances`，按 ID 取单项的接口也改走同一套检查，堵住通过跨服实例 ID 绕过内容权限的路径

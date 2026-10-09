@@ -3,10 +3,10 @@ set -e
 
 # ╔════════════════════════════════════════════════════╗
 # ║       Emby In One (Go) Release 一键安装脚本         ║
-# ║       https://github.com/ArizeSky/Emby-In-One     ║
+# ║       https://github.com/Takumilove/Emby-In-One     ║
 # ╚════════════════════════════════════════════════════╝
 
-GITHUB_REPO="ArizeSky/Emby-In-One"
+GITHUB_REPO="Takumilove/Emby-In-One"
 PROJECT_DIR="/opt/emby-in-one"
 SERVICE_NAME="emby-in-one"
 DEFAULT_PORT=8096

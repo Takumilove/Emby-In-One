@@ -10,7 +10,7 @@ set -o pipefail
 
 PROJECT_DIR="/opt/emby-in-one"
 # 远程安装时使用的 tarball 地址
-REPO_URL="https://github.com/ArizeSky/Emby-In-One/archive/refs/heads/main.tar.gz"
+REPO_URL="https://github.com/Takumilove/Emby-In-One/archive/refs/heads/main.tar.gz"
 
 # ── 颜色 ──
 RED='\033[0;31m'

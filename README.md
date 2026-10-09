@@ -2,14 +2,16 @@
 
 > **Version: V1.4.4-rc1 (Pre-release)**
 
-[![License: GPL v3](https://img.shields.io/github/license/ArizeSky/Emby-In-One?color=blue)](LICENSE)
+[![License: GPL v3](https://img.shields.io/github/license/Takumilove/Emby-In-One?color=blue)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Docker](https://img.shields.io/badge/Docker-20.10+-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
-[![GitHub Release](https://img.shields.io/github/v/release/ArizeSky/Emby-In-One?color=green)](https://github.com/ArizeSky/Emby-In-One/releases)
-[![GitHub Stars](https://img.shields.io/github/stars/ArizeSky/Emby-In-One?style=social)](https://github.com/ArizeSky/Emby-In-One)
+[![GitHub Release](https://img.shields.io/github/v/release/Takumilove/Emby-In-One?color=green)](https://github.com/Takumilove/Emby-In-One/releases)
+[![GitHub Stars](https://img.shields.io/github/stars/Takumilove/Emby-In-One?style=social)](https://github.com/Takumilove/Emby-In-One)
 
-[更新日志](Update.md) | [English README](README_EN.md) | [安全策略](SECURITY.md) | [更新计划](Update%20Plan.md) | [V1.2.1 旧版文档](README_V1.2.1.md) | [GitHub](https://github.com/ArizeSky/Emby-In-One)
+[更新日志](Update.md) | [English README](README_EN.md) | [安全策略](SECURITY.md) | [更新计划](Update%20Plan.md) | [V1.2.1 旧版文档](README_V1.2.1.md) | [GitHub](https://github.com/Takumilove/Emby-In-One)
+
+> 💡 **项目说明**：本项目基于原作者 [ArizeSky/Emby-In-One](https://github.com/ArizeSky/Emby-In-One) 进行独立维护与持续演进，特别增强了对第三方客户端（如 AfuseKt 等）的路由大小写兼容与多种登录凭据格式支持。
 
 基于Go语言实现的多台 Emby 服务器聚合代理，将多个上游 Emby 服务器的媒体库合并为一个统一入口，支持任何标准 Emby 客户端访问。支持多用户管理、独立观看历史、UA伪装、并发播放数限制和角色权限隔离。
 
@@ -80,7 +82,7 @@ Emby 连接地址：https://emby.cothx.eu.cc/
 ### 方式一：Release 二进制一键安装（首推）
 
 ```bash
-curl -fsSL -o release-install.sh https://raw.githubusercontent.com/ArizeSky/Emby-In-One/main/release-install.sh
+curl -fsSL -o release-install.sh https://raw.githubusercontent.com/Takumilove/Emby-In-One/main/release-install.sh
 sudo bash release-install.sh
 ```
 
@@ -100,7 +102,7 @@ sudo bash release-install.sh V1.4.4-rc1
 ### 方式二：源码仓库一键安装脚本（推荐开发者/希望本地构建镜像）
 
 ```bash
-git clone https://github.com/ArizeSky/Emby-In-One.git
+git clone https://github.com/Takumilove/Emby-In-One.git
 cd Emby-In-One
 bash install.sh
 ```
@@ -780,7 +782,7 @@ Emby-In-One/
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ArizeSky/Emby-In-One&type=Date)](https://star-history.com/#ArizeSky/Emby-In-One&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Takumilove/Emby-In-One&type=Date)](https://star-history.com/#Takumilove/Emby-In-One&Date)
 
 ---
 

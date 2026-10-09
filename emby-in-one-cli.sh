@@ -7,7 +7,7 @@
 PROJECT_DIR="/opt/emby-in-one"
 VERSION="1.4.4-rc1"
 SERVICE_NAME="emby-in-one"
-GITHUB_REPO="ArizeSky/Emby-In-One"
+GITHUB_REPO="Takumilove/Emby-In-One"
 
 # ── 颜色 ──
 RED='\033[0;31m'
