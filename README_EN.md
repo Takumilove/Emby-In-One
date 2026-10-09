@@ -11,7 +11,7 @@
 
 [Changelog](Update.md) | [中文文档](README.md) | [Security Policy](SECURITY.md) | [Update Plan](Update%20Plan.md) | [V1.2.1 Legacy Docs](README_V1.2.1.md) | [GitHub](https://github.com/Takumilove/Emby-In-One)
 
-> 💡 **Notice**: This project is independently maintained and enhanced from upstream [ArizeSky/Emby-In-One](https://github.com/ArizeSky/Emby-In-One), featuring enhanced third-party client compatibility (including AfuseKt case-insensitive routing and flexible credential support).
+> 💡 **Notice**: This project is independently maintained and enhanced from upstream [ArizeSky/Emby-In-One](https://github.com/ArizeSky/Emby-In-One), featuring enhanced third-party client compatibility (including AfuseKt case-insensitive routing and flexible credential support), with community contributions from [@ssabv](https://github.com/ssabv) for netdisk 302 stream pass-through, paged library scanning, and image redirect follow.
 
 Based on Go language, it implements a multi-server Emby aggregation proxy — merges media libraries from multiple upstream Emby servers into a single unified endpoint accessible by any standard Emby client. Supports multi-user management, independent watch history, UA spoofing, concurrent playback limits, and role-based access control.
 
