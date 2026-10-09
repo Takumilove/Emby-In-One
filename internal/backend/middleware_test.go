@@ -128,3 +128,53 @@ func TestCredentialEndpointHasNoCrossOriginGrant(t *testing.T) {
 		}
 	})
 }
+
+func TestNormalizeEmbyPath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"/emby/Users/authenticatebyname", "/Users/AuthenticateByName"},
+		{"/Users/authenticatebyname", "/Users/AuthenticateByName"},
+		{"/emby/users/authenticatebyname", "/Users/AuthenticateByName"},
+		{"/emby/System/Info/Public", "/System/Info/Public"},
+		{"/system/info/public", "/System/Info/Public"},
+		{"/emby", "/"},
+		{"/emby/", "/"},
+		{"/admin/api/status", "/admin/api/status"},
+		{"/favicon.ico", "/favicon.ico"},
+		{"/emby/Users/alice123/views", "/Users/alice123/Views"},
+		{"/emby/users/alice123/items/resume", "/Users/alice123/Items/Resume"},
+		{"/emby/sessions/playing/progress", "/Sessions/Playing/Progress"},
+	}
+	for _, tc := range tests {
+		got := normalizeEmbyPath(tc.input)
+		if got != tc.expected {
+			t.Errorf("normalizeEmbyPath(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+func TestAuthenticateByNameCaseInsensitiveAndForm(t *testing.T) {
+	withTempApp(t, func(app *App, handler http.Handler) {
+		// Test lowercase route as used by AfuseKt
+		req := httptest.NewRequest(http.MethodPost, "/emby/Users/authenticatebyname",
+			strings.NewReader(`{"Username":"admin","Pw":"secret"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("lowercase path auth status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+		}
+
+		// Test form urlencoded
+		reqForm := httptest.NewRequest(http.MethodPost, "/emby/Users/AuthenticateByName",
+			strings.NewReader(`Username=admin&Pw=secret`))
+		reqForm.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		recForm := httptest.NewRecorder()
+		handler.ServeHTTP(recForm, reqForm)
+		if recForm.Code != http.StatusOK {
+			t.Fatalf("form auth status = %d, want 200, body: %s", recForm.Code, recForm.Body.String())
+		}
+	})
+}

@@ -144,24 +144,102 @@ func identifyTokenSource(r *http.Request) string {
 	return "none"
 }
 
+var canonicalPathSegments = map[string]string{
+	"system":                    "System",
+	"info":                      "Info",
+	"public":                    "Public",
+	"endpoint":                  "Endpoint",
+	"ping":                      "Ping",
+	"users":                     "Users",
+	"authenticatebyname":        "AuthenticateByName",
+	"views":                     "Views",
+	"groupingoptions":           "GroupingOptions",
+	"configuration":             "Configuration",
+	"policy":                    "Policy",
+	"items":                     "Items",
+	"resume":                    "Resume",
+	"latest":                    "Latest",
+	"similar":                   "Similar",
+	"thememedia":                "ThemeMedia",
+	"playbackinfo":              "PlaybackInfo",
+	"videos":                    "Videos",
+	"audio":                     "Audio",
+	"activeencodings":           "ActiveEncodings",
+	"library":                   "Library",
+	"virtualfolders":            "VirtualFolders",
+	"selectableremotelibraries": "SelectableRemoteLibraries",
+	"mediafolders":              "MediaFolders",
+	"genres":                    "Genres",
+	"musicgenres":               "MusicGenres",
+	"studios":                   "Studios",
+	"persons":                   "Persons",
+	"artists":                   "Artists",
+	"albumartists":              "AlbumArtists",
+	"shows":                     "Shows",
+	"seasons":                   "Seasons",
+	"episodes":                  "Episodes",
+	"nextup":                    "NextUp",
+	"search":                    "Search",
+	"hints":                     "Hints",
+	"images":                    "Images",
+	"sessions":                  "Sessions",
+	"playing":                   "Playing",
+	"progress":                  "Progress",
+	"stopped":                   "Stopped",
+	"capabilities":              "Capabilities",
+	"full":                      "Full",
+	"playingitems":              "PlayingItems",
+	"userdata":                  "UserData",
+	"favoriteitems":             "FavoriteItems",
+}
+
+func normalizeEmbyPath(p string) string {
+	if isAdminPath(p) || p == "/favicon.ico" {
+		return p
+	}
+
+	lower := strings.ToLower(p)
+	trimmed := false
+	if lower == "/emby" || lower == "/emby/" {
+		return "/"
+	}
+	if strings.HasPrefix(lower, "/emby/") {
+		p = p[5:]
+		trimmed = true
+	}
+
+	parts := strings.Split(p, "/")
+	changed := false
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		if canon, ok := canonicalPathSegments[strings.ToLower(part)]; ok {
+			if parts[i] != canon {
+				parts[i] = canon
+				changed = true
+			}
+		}
+	}
+	if changed || trimmed {
+		normalized := strings.Join(parts, "/")
+		if normalized == "" {
+			return "/"
+		}
+		return normalized
+	}
+	return p
+}
+
 func (a *App) prefixCompatMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/emby" || r.URL.Path == "/emby/" {
+		normPath := normalizeEmbyPath(r.URL.Path)
+		if normPath != r.URL.Path {
 			clone := r.Clone(r.Context())
 			copiedURL := *clone.URL
 			clone.URL = &copiedURL
-			clone.URL.Path = "/"
-			next.ServeHTTP(w, clone)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/emby/") {
-			clone := r.Clone(r.Context())
-			copiedURL := *clone.URL
-			clone.URL = &copiedURL
-			clone.URL.Path = strings.TrimPrefix(r.URL.Path, "/emby")
-			if clone.URL.Path == "" {
-				clone.URL.Path = "/"
-			}
+			clone.URL.Path = normPath
+			clone.URL.RawPath = ""
 			next.ServeHTTP(w, clone)
 			return
 		}

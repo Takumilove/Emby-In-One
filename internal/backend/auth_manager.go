@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -174,7 +175,7 @@ func (m *AuthManager) save() error {
 
 func (m *AuthManager) Authenticate(username, password string) (map[string]any, bool, error) {
 	cfg := m.configStore.Snapshot()
-	if username != cfg.Admin.Username {
+	if !strings.EqualFold(username, cfg.Admin.Username) {
 		// Spend the same scrypt time a real check would, so the response does not confirm
 		// which account name the administrator uses.
 		spendVerifyTime(password)

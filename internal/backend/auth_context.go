@@ -142,13 +142,13 @@ func extractToken(r *http.Request) string {
 }
 
 func extractTokenFromAuthHeader(header string) string {
-	for _, marker := range []string{"Token=\"", "Token="} {
+	for _, marker := range []string{"Token=\"", "Token=", "token=\"", "token="} {
 		idx := strings.Index(header, marker)
 		if idx < 0 {
 			continue
 		}
 		rest := header[idx+len(marker):]
-		if marker == "Token=\"" {
+		if marker == "Token=\"" || marker == "token=\"" {
 			if end := strings.Index(rest, "\""); end >= 0 {
 				return rest[:end]
 			}

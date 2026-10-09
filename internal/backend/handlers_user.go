@@ -1,6 +1,95 @@
 package backend
 
-import "net/http"
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+func decodeAuthCredentials(r *http.Request) (string, string, error) {
+	var username, password string
+	contentType := r.Header.Get("Content-Type")
+
+	if strings.Contains(contentType, "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err != nil {
+			return "", "", err
+		}
+		username = r.FormValue("Username")
+		if username == "" {
+			username = r.FormValue("username")
+		}
+		password = r.FormValue("Pw")
+		if password == "" {
+			password = r.FormValue("pw")
+		}
+		if password == "" {
+			password = r.FormValue("Password")
+		}
+		if password == "" {
+			password = r.FormValue("password")
+		}
+	} else if r.Body != nil {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			return "", "", err
+		}
+		_ = r.Body.Close()
+		if len(bodyBytes) > 0 {
+			var jsonBody struct {
+				Username string `json:"Username"`
+				Pw       string `json:"Pw"`
+				Password string `json:"Password"`
+			}
+			if jErr := json.Unmarshal(bodyBytes, &jsonBody); jErr == nil {
+				username = jsonBody.Username
+				password = jsonBody.Pw
+				if password == "" {
+					password = jsonBody.Password
+				}
+			} else if vals, qErr := url.ParseQuery(string(bodyBytes)); qErr == nil && (vals.Get("Username") != "" || vals.Get("username") != "") {
+				username = vals.Get("Username")
+				if username == "" {
+					username = vals.Get("username")
+				}
+				password = vals.Get("Pw")
+				if password == "" {
+					password = vals.Get("pw")
+				}
+				if password == "" {
+					password = vals.Get("Password")
+				}
+				if password == "" {
+					password = vals.Get("password")
+				}
+			} else {
+				return "", "", jErr
+			}
+		}
+	}
+
+	if username == "" {
+		username = r.URL.Query().Get("Username")
+		if username == "" {
+			username = r.URL.Query().Get("username")
+		}
+	}
+	if password == "" {
+		password = r.URL.Query().Get("Pw")
+		if password == "" {
+			password = r.URL.Query().Get("pw")
+		}
+		if password == "" {
+			password = r.URL.Query().Get("Password")
+		}
+		if password == "" {
+			password = r.URL.Query().Get("password")
+		}
+	}
+
+	return username, password, nil
+}
 
 func (a *App) handleAuthenticateByName(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r, a.ConfigStore.Snapshot().Server.TrustProxy)
@@ -11,28 +100,20 @@ func (a *App) handleAuthenticateByName(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{"message": "Too many failed login attempts, please try again later"})
 		return
 	}
-	var body struct {
-		Username string `json:"Username"`
-		Pw       string `json:"Pw"`
-		Password string `json:"Password"`
-	}
-	if err := decodeJSONBody(r, &body); err != nil {
+	username, password, err := decodeAuthCredentials(r)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"message": "Invalid request body"})
 		return
 	}
-	password := body.Pw
-	if password == "" {
-		password = body.Password
-	}
 	if a.Logger != nil {
 		a.Logger.Infof("Login attempt: user=%q client=%q device=%q ip=%s",
-			body.Username, r.Header.Get("X-Emby-Client"), r.Header.Get("X-Emby-Device-Name"), r.RemoteAddr)
+			username, r.Header.Get("X-Emby-Client"), r.Header.Get("X-Emby-Device-Name"), r.RemoteAddr)
 		a.Logger.Debugf("Login headers: UA=%q DeviceId=%q Version=%q",
 			r.Header.Get("User-Agent"), r.Header.Get("X-Emby-Device-Id"), r.Header.Get("X-Emby-Client-Version"))
 	}
 
 	// 1. Try admin match
-	result, ok, err := a.Auth.Authenticate(body.Username, password)
+	result, ok, err := a.Auth.Authenticate(username, password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"message": err.Error()})
 		return
@@ -45,7 +126,7 @@ func (a *App) handleAuthenticateByName(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if a.Logger != nil {
-			a.Logger.Infof("Login success: user=%q role=admin ip=%s", body.Username, r.RemoteAddr)
+			a.Logger.Infof("Login success: user=%q role=admin ip=%s", username, r.RemoteAddr)
 		}
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -53,7 +134,7 @@ func (a *App) handleAuthenticateByName(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Try regular user match
 	if a.UserStore != nil {
-		user := a.UserStore.Authenticate(body.Username, password)
+		user := a.UserStore.Authenticate(username, password)
 		if user != nil {
 			response, _, authErr := a.Auth.AuthenticateUser(user)
 			if authErr != nil {
@@ -72,7 +153,7 @@ func (a *App) handleAuthenticateByName(w http.ResponseWriter, r *http.Request) {
 	// 3. No match
 	a.loginLimiter.recordFailure(ip)
 	if a.Logger != nil {
-		a.Logger.Warnf("Login failed: user=%q ip=%s client=%q", body.Username, ip, r.Header.Get("X-Emby-Client"))
+		a.Logger.Warnf("Login failed: user=%q ip=%s client=%q", username, ip, r.Header.Get("X-Emby-Client"))
 	}
 	writeJSON(w, http.StatusUnauthorized, map[string]any{"message": "Invalid username or password"})
 }
