@@ -270,6 +270,18 @@ func TestUserStateRoutesResolveIDsAndRewriteJSONResponses(t *testing.T) {
 					"IsFavorite": false,
 				},
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/Users/user-a/PlayedItems/item-a":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ItemId": "item-a",
+				"Played": true,
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/Users/user-a/PlayedItems/item-a":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ItemId": "item-a",
+				"Played": false,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/Users/user-a/Items/item-a/HideFromResume":
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -340,6 +352,31 @@ func TestUserStateRoutesResolveIDsAndRewriteJSONResponses(t *testing.T) {
 		userData, _ = payload["UserData"].(map[string]any)
 		if userData["ItemId"] == "item-a" {
 			t.Fatalf("favorite delete nested item id not rewritten: %#v", payload)
+		}
+
+		// 标记已播放（POST /PlayedItems）
+		rr = doJSONRequest(t, handler, http.MethodPost, "/Users/"+app.Auth.ProxyUserID()+"/PlayedItems/"+virtualItem, nil, token)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("played post status = %d, body=%s", rr.Code, rr.Body.String())
+		}
+		payload = map[string]any{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("unmarshal played post response: %v", err)
+		}
+		if payload["ItemId"] == "item-a" {
+			t.Fatalf("played post item id not rewritten: %#v", payload)
+		}
+
+		// 标记未播放（DELETE /PlayedItems）
+		rr = doJSONRequest(t, handler, http.MethodDelete, "/Users/"+app.Auth.ProxyUserID()+"/PlayedItems/"+virtualItem, nil, token)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("played delete status = %d, body=%s", rr.Code, rr.Body.String())
+		}
+
+		// 从继续观看中移除（POST /HideFromResume）
+		rr = doJSONRequest(t, handler, http.MethodPost, "/Users/"+app.Auth.ProxyUserID()+"/Items/"+virtualItem+"/HideFromResume", nil, token)
+		if rr.Code != http.StatusNoContent && rr.Code != http.StatusOK {
+			t.Fatalf("hide from resume status = %d, body=%s", rr.Code, rr.Body.String())
 		}
 	})
 }

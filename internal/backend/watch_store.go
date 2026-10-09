@@ -137,15 +137,37 @@ func (ws *WatchStore) UpdatePosition(proxyUserID, virtualItemID string, position
 	`, positionTicks, runtimeTicks, runtimeTicks, now, proxyUserID, virtualItemID)
 }
 
-// MarkPlayed sets the played status for a user+item.
+// MarkPlayed 设置指定用户和项目的已播放/未播放状态，并将 position_ticks 重置为 0。
+// 若 virtualItemID 为剧集，会同时联动更新其关联的所有单集。
 func (ws *WatchStore) MarkPlayed(proxyUserID, virtualItemID string, played bool) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
+	now := time.Now().UnixMilli()
+	_ = ws.db.writeParams(`
+		UPDATE user_watch_progress
+		SET played = ?, position_ticks = 0, last_played = ?
+		WHERE proxy_user_id = ? AND (virtual_item_id = ? OR series_virtual_id = ?)
+	`, boolToInt(played), now, proxyUserID, virtualItemID, virtualItemID)
 	return ws.db.writeParams(`
-		INSERT INTO user_watch_progress (proxy_user_id, virtual_item_id, server_id, played, last_played)
-		VALUES (?, ?, '', ?, ?)
-		ON CONFLICT(proxy_user_id, virtual_item_id) DO UPDATE SET played = excluded.played
-	`, proxyUserID, virtualItemID, boolToInt(played), time.Now().UnixMilli())
+		INSERT INTO user_watch_progress (proxy_user_id, virtual_item_id, server_id, played, position_ticks, last_played)
+		VALUES (?, ?, '', ?, 0, ?)
+		ON CONFLICT(proxy_user_id, virtual_item_id) DO UPDATE SET
+			played = excluded.played,
+			position_ticks = 0,
+			last_played = excluded.last_played
+	`, proxyUserID, virtualItemID, boolToInt(played), now)
+}
+
+// HideFromResume 清空指定项目或剧集的继续观看进度（position_ticks 重置为 0），将其从继续观看列表中移除。
+func (ws *WatchStore) HideFromResume(proxyUserID, virtualItemID string) error {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	now := time.Now().UnixMilli()
+	return ws.db.writeParams(`
+		UPDATE user_watch_progress
+		SET position_ticks = 0, last_played = ?
+		WHERE proxy_user_id = ? AND (virtual_item_id = ? OR series_virtual_id = ?)
+	`, now, proxyUserID, virtualItemID, virtualItemID)
 }
 
 // SetFavorite sets the favorite status for a user+item.

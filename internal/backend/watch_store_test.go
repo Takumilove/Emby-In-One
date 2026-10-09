@@ -134,6 +134,53 @@ func TestWatchStoreMarkPlayed(t *testing.T) {
 	if got.Played {
 		t.Fatalf("Played = true, want false")
 	}
+	if got.PositionTicks != 0 {
+		t.Fatalf("PositionTicks = %d, want 0 after unplayed", got.PositionTicks)
+	}
+}
+
+func TestWatchStoreHideFromResume(t *testing.T) {
+	ws := newTestWatchStore(t)
+
+	ws.RecordProgress(&WatchProgress{
+		ProxyUserID:   "user1",
+		VirtualItemID: "item1",
+		PositionTicks: 5000,
+	})
+
+	resumes, err := ws.GetResumeItems("user1", 10)
+	if err != nil || len(resumes) != 1 {
+		t.Fatalf("expected 1 resume item, got %d (err: %v)", len(resumes), err)
+	}
+
+	if err := ws.HideFromResume("user1", "item1"); err != nil {
+		t.Fatalf("HideFromResume error: %v", err)
+	}
+
+	got := ws.GetProgress("user1", "item1")
+	if got.PositionTicks != 0 {
+		t.Fatalf("PositionTicks = %d, want 0 after HideFromResume", got.PositionTicks)
+	}
+
+	resumes, err = ws.GetResumeItems("user1", 10)
+	if err != nil || len(resumes) != 0 {
+		t.Fatalf("expected 0 resume items, got %d", len(resumes))
+	}
+
+	// 剧集联动隐藏测试：隐藏整部剧时，其所有单集继续观看进度均清零
+	ws.RecordProgress(&WatchProgress{
+		ProxyUserID:     "user1",
+		VirtualItemID:   "ep1",
+		SeriesVirtualID: "series1",
+		PositionTicks:   6000,
+	})
+	if err := ws.HideFromResume("user1", "series1"); err != nil {
+		t.Fatalf("HideFromResume series error: %v", err)
+	}
+	gotEp := ws.GetProgress("user1", "ep1")
+	if gotEp.PositionTicks != 0 {
+		t.Fatalf("Episode PositionTicks = %d, want 0 after series HideFromResume", gotEp.PositionTicks)
+	}
 }
 
 func TestWatchStoreMarkPlayedUpsertsWithoutPriorRecord(t *testing.T) {

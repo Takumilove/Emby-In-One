@@ -22,6 +22,7 @@
 - **多种登录凭据提交格式支持**：`AuthenticateByName` 接口增强为同时兼容 `application/json`、`application/x-www-form-urlencoded` 表单提交以及 URL Query 参数。
 - **管理员账号大小写兼容**：管理员账号比对改为大小写不敏感（`strings.EqualFold`）。
 - **Token 头字段兼容**：支持 `Token=`、`token=`、`Token="` 与 `token="`。
+- **播放状态与继续观看管理**：完整支持客户端手动「标记已播放」（`POST /PlayedItems`）与「标记未播放」（`DELETE /PlayedItems`），并支持从「继续观看」中移除视频（`POST /HideFromResume`），本地 SQLite 数据库同步双写持久化，即时生效。
 - **合流社区贡献（鸣谢 [@ssabv](https://github.com/ssabv)）**：
   - **媒体流直链 302 透传（`directRedirect`）**：针对网盘/STRM 上游，支持将网盘签名 CDN 直链直接 302 重定向给播放器，大幅节省代理服务器带宽，支持多跳重定向链解析。
   - **图片 302 重定向跟随**：修复网盘服海报 302 跳转导致的破图问题，图片代理自动追踪跳转链。

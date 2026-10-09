@@ -21,6 +21,12 @@ func (a *App) registerSessionAndUserStateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /Users/{userId}/Items/{itemId}/UserData", a.withContext(a.requireAuth(a.handleUserItemUserData)))
 	mux.HandleFunc("POST /Users/{userId}/FavoriteItems/{itemId}", a.withContext(a.requireAuth(a.handleFavoriteItemAdd)))
 	mux.HandleFunc("DELETE /Users/{userId}/FavoriteItems/{itemId}", a.withContext(a.requireAuth(a.handleFavoriteItemRemove)))
+	mux.HandleFunc("POST /Users/{userId}/PlayedItems/{itemId}", a.withContext(a.requireAuth(a.handlePlayedItemAdd)))
+	mux.HandleFunc("DELETE /Users/{userId}/PlayedItems/{itemId}", a.withContext(a.requireAuth(a.handlePlayedItemRemove)))
+	mux.HandleFunc("POST /Users/{userId}/PlayedItems/{itemId}/Delete", a.withContext(a.requireAuth(a.handlePlayedItemRemove)))
+	mux.HandleFunc("POST /Users/{userId}/Items/{itemId}/HideFromResume", a.withContext(a.requireAuth(a.handleHideFromResumeAdd)))
+	mux.HandleFunc("DELETE /Users/{userId}/Items/{itemId}/HideFromResume", a.withContext(a.requireAuth(a.handleHideFromResumeRemove)))
+	mux.HandleFunc("POST /Users/{userId}/Items/{itemId}/HideFromResume/Delete", a.withContext(a.requireAuth(a.handleHideFromResumeRemove)))
 }
 
 func decodeOptionalJSON(r *http.Request) (any, error) {
@@ -579,6 +585,106 @@ func (a *App) handleFavoriteItemRemove(w http.ResponseWriter, r *http.Request) {
 	if a.WatchStore != nil {
 		if reqCtx := requestContextFrom(r.Context()); reqCtx != nil && reqCtx.ProxyUser != nil && reqCtx.ProxyUser.Role != "admin" {
 			_ = a.WatchStore.SetFavorite(reqCtx.ProxyUser.UserID, virtualItemID, false)
+		}
+	}
+	if payload == nil {
+		if status == 0 {
+			status = http.StatusNoContent
+		}
+		w.WriteHeader(status)
+		return
+	}
+	a.overlayLocalUserData(r, virtualItemID, payload)
+	cfg := a.ConfigStore.Snapshot()
+	rewriteResponseIDs(payload, resolved.ServerID, a.IDStore, cfg.Server.ID, a.clientFacingUserIDFor(r))
+	writeJSON(w, status, payload)
+}
+
+func (a *App) handlePlayedItemAdd(w http.ResponseWriter, r *http.Request) {
+	a.handlePlayedItemChange(w, r, http.MethodPost, true)
+}
+
+func (a *App) handlePlayedItemRemove(w http.ResponseWriter, r *http.Request) {
+	a.handlePlayedItemChange(w, r, http.MethodDelete, false)
+}
+
+func (a *App) handlePlayedItemChange(w http.ResponseWriter, r *http.Request, upstreamMethod string, played bool) {
+	virtualItemID := r.PathValue("itemId")
+	resolved := a.resolveRouteID(virtualItemID)
+	if resolved == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"message": "Item not found"})
+		return
+	}
+	if !a.requireServerAccess(w, r, resolved) {
+		return
+	}
+	body, err := decodeOptionalJSON(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"message": "Invalid JSON body"})
+		return
+	}
+	query := cloneValues(r.URL.Query())
+	status, payload, err := a.forwardJSONOrNoContent(r, resolved.Client, upstreamMethod, fmt.Sprintf("/Users/%s/PlayedItems/%s", resolved.Client.clientUserID(), resolved.OriginalID), query, body)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		return
+	}
+	// 双写：针对非管理员用户同步更新本地 WatchStore
+	if a.WatchStore != nil {
+		if reqCtx := requestContextFrom(r.Context()); reqCtx != nil && reqCtx.ProxyUser != nil && reqCtx.ProxyUser.Role != "admin" {
+			_ = a.WatchStore.MarkPlayed(reqCtx.ProxyUser.UserID, virtualItemID, played)
+		}
+	}
+	if payload == nil {
+		if status == 0 {
+			status = http.StatusOK
+		}
+		// 若上游未返回响应体，则构造基础 UserData 响应，以便客户端立即获取最新状态
+		payload = map[string]any{
+			"ItemId":                virtualItemID,
+			"Played":                played,
+			"PlaybackPositionTicks": int64(0),
+		}
+	}
+	a.overlayLocalUserData(r, virtualItemID, payload)
+	cfg := a.ConfigStore.Snapshot()
+	rewriteResponseIDs(payload, resolved.ServerID, a.IDStore, cfg.Server.ID, a.clientFacingUserIDFor(r))
+	writeJSON(w, status, payload)
+}
+
+func (a *App) handleHideFromResumeAdd(w http.ResponseWriter, r *http.Request) {
+	a.handleHideFromResumeChange(w, r, http.MethodPost)
+}
+
+func (a *App) handleHideFromResumeRemove(w http.ResponseWriter, r *http.Request) {
+	a.handleHideFromResumeChange(w, r, http.MethodDelete)
+}
+
+func (a *App) handleHideFromResumeChange(w http.ResponseWriter, r *http.Request, upstreamMethod string) {
+	virtualItemID := r.PathValue("itemId")
+	resolved := a.resolveRouteID(virtualItemID)
+	if resolved == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"message": "Item not found"})
+		return
+	}
+	if !a.requireServerAccess(w, r, resolved) {
+		return
+	}
+	body, err := decodeOptionalJSON(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"message": "Invalid JSON body"})
+		return
+	}
+	query := cloneValues(r.URL.Query())
+	status, payload, err := a.forwardJSONOrNoContent(r, resolved.Client, upstreamMethod, fmt.Sprintf("/Users/%s/Items/%s/HideFromResume", resolved.Client.clientUserID(), resolved.OriginalID), query, body)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		return
+	}
+	// 针对非管理员用户从本地 WatchStore 清空该项目的继续观看进度
+	if a.WatchStore != nil {
+		if reqCtx := requestContextFrom(r.Context()); reqCtx != nil && reqCtx.ProxyUser != nil && reqCtx.ProxyUser.Role != "admin" {
+			_ = a.WatchStore.HideFromResume(reqCtx.ProxyUser.UserID, virtualItemID)
 		}
 	}
 	if payload == nil {

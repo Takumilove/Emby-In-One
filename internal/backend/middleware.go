@@ -189,8 +189,10 @@ var canonicalPathSegments = map[string]string{
 	"capabilities":              "Capabilities",
 	"full":                      "Full",
 	"playingitems":              "PlayingItems",
+	"playeditems":               "PlayedItems",
 	"userdata":                  "UserData",
 	"favoriteitems":             "FavoriteItems",
+	"hidefromresume":            "HideFromResume",
 }
 
 func normalizeEmbyPath(p string) string {

@@ -145,3 +145,64 @@ func TestUserDataFailedForwardDoesNotCreateSkeletonRecord(t *testing.T) {
 		}
 	})
 }
+
+func TestPlayedItemsAndHideFromResumeDualWriteForRegularUser(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/Users/AuthenticateByName":
+			_ = json.NewEncoder(w).Encode(map[string]any{"AccessToken": "tok-a", "User": map[string]any{"Id": "user-a"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/Users/user-a/PlayedItems/item-a":
+			_ = json.NewEncoder(w).Encode(map[string]any{"Played": true, "ItemId": "item-a"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/Users/user-a/PlayedItems/item-a":
+			_ = json.NewEncoder(w).Encode(map[string]any{"Played": false, "ItemId": "item-a"})
+		case r.Method == http.MethodPost && r.URL.Path == "/Users/user-a/Items/item-a/HideFromResume":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	withTempAppConfig(t, singleUpstreamConfig(upstream.URL), func(app *App, handler http.Handler) {
+		userToken := createRegularUser(t, handler)
+		virtualItem := app.IDStore.GetOrCreateVirtualID("item-a", app.Upstream.Clients()[0].ID)
+		userID := watchUserID(t, app, "child")
+
+		// 1. 模拟初始播放进度（使该项目进入继续观看）
+		_ = app.WatchStore.RecordProgress(&WatchProgress{
+			ProxyUserID:   userID,
+			VirtualItemID: virtualItem,
+			PositionTicks: 5000,
+		})
+
+		// 2. 从继续观看中移除，验证本地进度是否被清零
+		rr := doAuthJSON(t, handler, http.MethodPost, "/Users/"+app.Auth.ProxyUserID()+"/Items/"+virtualItem+"/HideFromResume", nil, userToken)
+		if rr.Code != http.StatusNoContent && rr.Code != http.StatusOK {
+			t.Fatalf("HideFromResume status = %d, want 204/200 (body=%s)", rr.Code, rr.Body.String())
+		}
+		p := app.WatchStore.GetProgress(userID, virtualItem)
+		if p == nil || p.PositionTicks != 0 {
+			t.Fatalf("HideFromResume did not reset PositionTicks to 0: %#v", p)
+		}
+
+		// 3. 标记为已播放，验证本地数据库是否双写标记 played = true
+		rr = doAuthJSON(t, handler, http.MethodPost, "/Users/"+app.Auth.ProxyUserID()+"/PlayedItems/"+virtualItem, nil, userToken)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PlayedItems POST status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+		}
+		p = app.WatchStore.GetProgress(userID, virtualItem)
+		if p == nil || !p.Played {
+			t.Fatalf("PlayedItems POST did not set Played = true: %#v", p)
+		}
+
+		// 4. 标记为未播放，验证本地数据库是否双写更新 played = false
+		rr = doAuthJSON(t, handler, http.MethodDelete, "/Users/"+app.Auth.ProxyUserID()+"/PlayedItems/"+virtualItem, nil, userToken)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PlayedItems DELETE status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
+		}
+		p = app.WatchStore.GetProgress(userID, virtualItem)
+		if p == nil || p.Played {
+			t.Fatalf("PlayedItems DELETE did not set Played = false: %#v", p)
+		}
+	})
+}
