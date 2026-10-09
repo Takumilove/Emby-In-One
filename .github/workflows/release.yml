@@ -249,6 +249,7 @@ jobs:
           # 幂等：重跑失败的发布时 Release 可能已创建，改为补传/覆盖资产。
           # release-notes.md 只作为正文，不作为资产上传。
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
