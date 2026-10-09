@@ -17,7 +17,6 @@ Based on Go language, it implements a multi-server Emby aggregation proxy — me
 
 ## Table of Contents
 
-- [Demo Site](#demo-site)
 - [Preview](#preview)
 - [Features Overview](#features-overview)
 - [Quick Installation](#quick-installation)
@@ -36,13 +35,6 @@ Based on Go language, it implements a multi-server Emby aggregation proxy — me
 - [Project Architecture](#project-architecture-developer-reference)
 - [Star History](#star-history)
 - [License](#license)
-
-## Demo Site
-
-[Demo Site](https://emby.cothx.eu.cc/)
-Emby Connection Address: https://emby.cothx.eu.cc/
-
-> **Demo credentials are no longer published in this repository.** For security reasons, no plaintext account or password is provided here. To try the demo, contact the maintainer via GitHub [Issues](https://github.com/ArizeSky/Emby-In-One/issues) for a **periodically rotated** temporary account. Please do not redistribute demo credentials in public channels.
 
 ## Preview
 
