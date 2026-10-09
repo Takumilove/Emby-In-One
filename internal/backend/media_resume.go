@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -130,7 +131,7 @@ func (a *App) enrichWatchItems(r *http.Request, reqCtx *RequestContext, items []
 		}
 		q := url.Values{}
 		q.Set("Ids", joinComma(g.originalIDs))
-		q.Set("Fields", "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,Overview,DateCreated,MediaSources,Path,SortName,Studios,Taglines,Genres,CommunityRating,OfficialRating,CumulativeRunTimeTicks,Chapters,ProviderIds")
+		q.Set("Fields", "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,Overview,DateCreated,MediaSources,Path,SortName,Studios,Taglines,Genres,CommunityRating,OfficialRating,CumulativeRunTimeTicks,RunTimeTicks,SeriesPrimaryImageTag,SeriesName,SeriesId,SeasonId,Chapters,ProviderIds")
 		payload, err := client.RequestJSON(r.Context(), reqCtx, a.Identity, http.MethodGet, "/Items", q, nil)
 		if err != nil {
 			continue
@@ -151,6 +152,12 @@ func (a *App) enrichWatchItems(r *http.Request, reqCtx *RequestContext, items []
 		}
 		// Rewrite upstream IDs to virtual
 		rewriteResponseIDs(item, wp.ServerID, a.IDStore, cfg.Server.ID, a.clientFacingUserIDFor(r))
+		// Ensure RunTimeTicks is present on item
+		rt, _ := numericInt64(item["RunTimeTicks"])
+		if rt <= 0 && wp.RuntimeTicks > 0 {
+			rt = wp.RuntimeTicks
+			item["RunTimeTicks"] = rt
+		}
 		// Overlay local UserData
 		ud, _ := item["UserData"].(map[string]any)
 		if ud == nil {
@@ -159,6 +166,13 @@ func (a *App) enrichWatchItems(r *http.Request, reqCtx *RequestContext, items []
 		ud["PlaybackPositionTicks"] = wp.PositionTicks
 		ud["Played"] = wp.Played
 		ud["IsFavorite"] = wp.IsFavorite
+		if rt > 0 && wp.PositionTicks > 0 {
+			pct := math.Round((float64(wp.PositionTicks)/float64(rt))*10000) / 100
+			if pct > 100 {
+				pct = 100
+			}
+			ud["PlayedPercentage"] = pct
+		}
 		item["UserData"] = ud
 		result = append(result, item)
 	}

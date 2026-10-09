@@ -159,7 +159,7 @@ func (a *App) resolveSeriesServer(sp *WatchProgress) (serverID string, seriesOri
 // the user's last played episode in a series.
 func (a *App) fetchNextEpisode(r *http.Request, reqCtx *RequestContext, client *UpstreamClient, seriesOriginalID string, serverID string, lastPlayed *WatchProgress) map[string]any {
 	q := url.Values{}
-	q.Set("Fields", "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,Overview,DateCreated,MediaSources,Path,SortName,Studios,Taglines,Genres,CommunityRating,OfficialRating,CumulativeRunTimeTicks,Chapters,ProviderIds")
+	q.Set("Fields", "BasicSyncInfo,CanDelete,PrimaryImageAspectRatio,Overview,DateCreated,MediaSources,Path,SortName,Studios,Taglines,Genres,CommunityRating,OfficialRating,CumulativeRunTimeTicks,RunTimeTicks,SeriesPrimaryImageTag,SeriesName,SeriesId,SeasonId,Chapters,ProviderIds")
 	q.Set("UserId", client.clientUserID())
 	q.Set("Season", strconv.Itoa(lastPlayed.ParentIndexNumber))
 	q.Set("SortBy", "SortName")

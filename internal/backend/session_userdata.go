@@ -737,17 +737,39 @@ func (a *App) overlayLocalUserData(r *http.Request, virtualItemID string, payloa
 	if !ok {
 		return
 	}
+	rt := progress.RuntimeTicks
+	if rt <= 0 {
+		if r, ok := numericInt64(m["RunTimeTicks"]); ok {
+			rt = r
+		}
+	}
+	var playedPct float64
+	if progress.Played {
+		playedPct = 100.0
+	} else if rt > 0 && progress.PositionTicks > 0 {
+		playedPct = math.Round((float64(progress.PositionTicks)/float64(rt))*10000) / 100
+		if playedPct > 100 {
+			playedPct = 100
+		}
+	}
+
 	// Overlay top-level fields if this IS a UserData object
 	if _, hasPlayPos := m["PlaybackPositionTicks"]; hasPlayPos {
 		m["PlaybackPositionTicks"] = progress.PositionTicks
 		m["Played"] = progress.Played
 		m["IsFavorite"] = progress.IsFavorite
+		if playedPct > 0 {
+			m["PlayedPercentage"] = playedPct
+		}
 	}
 	// Overlay nested UserData if present
 	if ud, ok := m["UserData"].(map[string]any); ok {
 		ud["PlaybackPositionTicks"] = progress.PositionTicks
 		ud["Played"] = progress.Played
 		ud["IsFavorite"] = progress.IsFavorite
+		if playedPct > 0 {
+			ud["PlayedPercentage"] = playedPct
+		}
 	}
 }
 
