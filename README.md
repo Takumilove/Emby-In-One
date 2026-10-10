@@ -1,6 +1,6 @@
 # Emby-In-One
 
-> **Version: V1.4.4**
+> **Version: V1.4.5**
 
 [![License: GPL v3](https://img.shields.io/github/license/Takumilove/Emby-In-One?color=blue)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white)](https://go.dev/)

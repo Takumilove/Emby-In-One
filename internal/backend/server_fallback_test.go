@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -210,8 +211,8 @@ func TestResumeEndpointOfflineFallback(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/Users/AuthenticateByName":
 			_ = json.NewEncoder(w).Encode(map[string]any{"AccessToken": "tok-b", "User": map[string]any{"Id": "user-b"}})
-		case r.Method == http.MethodGet && r.URL.Path == "/Items":
-			// Return item metadata for movie-b
+		case r.Method == http.MethodGet && (r.URL.Path == "/Items" || strings.HasSuffix(r.URL.Path, "/Items")):
+			// 为 movie-b 返回媒体项元数据
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"Items": []any{
 					map[string]any{
